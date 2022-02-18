@@ -14,9 +14,11 @@ export class TwitterRelationship {
   @PrimaryGeneratedColumn()
   id!: number;
 
+  @Index()
   @ManyToOne(() => TwitterUser, (user) => user.following)
   from!: TwitterUser;
 
+  @Index()
   @ManyToOne(() => TwitterUser, (user) => user.followers)
   to!: TwitterUser;
 

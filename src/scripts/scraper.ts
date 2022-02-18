@@ -291,9 +291,9 @@ async function main(accounts: string[]) {
   let iteration = 0;
   while (true) {
     await scrape();
-    console.log(`Finished iteration (${iteration}) waiting for one minute...`);
+    console.log(`Finished iteration (${iteration}) waiting for two minutes...`);
     iteration += 1;
-    await sleep(1000 * 60); // Scrape every three minutes
+    await sleep(1000 * 60 * 2); // Scrape every two minutes
   }
 }
 
