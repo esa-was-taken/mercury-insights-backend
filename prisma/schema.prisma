@@ -1,0 +1,51 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["extendedIndexes"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model TUser {
+  id               String        @id
+  name             String
+  username         String
+  following        TConnection[] @relation("following")
+  followers        TConnection[] @relation("followers")
+  accountCreatedAt DateTime?
+  accountExists    Boolean?
+  marked           Boolean       @default(false)
+  scrapedAt        DateTime      @default(now())
+  createdAt        DateTime      @default(now())
+
+  @@index([username])
+  @@index([marked], type: Hash)
+  @@index([scrapedAt])
+}
+
+enum ConnectionStatus {
+  CONNECTED
+  DISCONNECTED
+}
+
+model TConnection {
+  from      TUser            @relation("following", fields: [fromId], references: [id], onDelete: Cascade)
+  fromId    String
+  to        TUser            @relation("followers", fields: [toId], references: [id], onDelete: Cascade)
+  toId      String
+  version   Int
+  status    ConnectionStatus
+  createdAt DateTime         @default(now())
+
+  @@id([fromId, toId, version])
+  @@index([fromId])
+  @@index([toId])
+  @@index([status], type: Hash)
+  @@index([fromId, toId, version(sort: Desc)])
+  @@index([createdAt])
+}

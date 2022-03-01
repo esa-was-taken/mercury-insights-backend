@@ -1,19 +1,23 @@
 import * as dotenv from 'dotenv';
-import { TwitterUser } from '../entity/twitter_user';
+import { PrismaClient, ConnectionStatus, TUser } from '@prisma/client';
+import { mainModule } from 'process';
 import {
-  ApiRequestError,
-  ApiResponseError,
   TwitterApi,
   TwitterRateLimit,
+  ApiResponseError,
   UserV2,
+  ApiRequestError,
 } from 'twitter-api-v2';
-import { Connection, createConnection, getRepository } from 'typeorm';
-import { TwitterRelationship } from '../entity/twitter_relationship';
 
 dotenv.config();
+const prisma = new PrismaClient();
 
 const twitterClient = new TwitterApi(process.env.TWITTER_API_BEARER || '');
 const client = twitterClient.readOnly;
+
+/*
+  TWITTER
+*/
 
 class CustomRatelimitError extends Error {
   rateLimit: TwitterRateLimit;
@@ -56,6 +60,7 @@ async function _fetchTwitterFollowingByUserId(userId: string) {
   const request = await client.v2.following(userId, {
     asPaginator: true,
     max_results: 1000,
+    'user.fields': 'created_at',
   });
 
   const followers: UserV2[] = [];
@@ -86,130 +91,110 @@ async function fetchTwitterUserByUsername(userName: string) {
     async () => await client.v2.userByUsername(userName),
   );
 
-  return user.data;
+  return user.data ? user.data : undefined;
 }
 
-async function fetchStaleUser() {
-  const twitterUserRepository = getRepository(TwitterUser);
-  const result = await twitterUserRepository
-    .createQueryBuilder('user')
-    .where("user.is_watched = 'true'")
-    .orderBy('user.scraped_at', 'ASC', 'NULLS FIRST')
-    .getOne();
+/*
+   DATABASE 
+*/
 
-  return result;
-}
-
-async function fetchDbfollowedOfUserId(userId: string) {
-  const twitterRelationshipRepository = getRepository(TwitterRelationship);
-  const result = await twitterRelationshipRepository
-    .createQueryBuilder('relationship')
-    .where('relationship.from = :from', { from: userId })
-    .distinctOn(['relationship.from', 'relationship.to'])
-    .orderBy({
-      'relationship.from': 'ASC',
-      'relationship.to': 'ASC',
-      'relationship.created_at': 'DESC',
-    })
-    .leftJoinAndSelect('relationship.to', 'user')
-    .getMany();
-
-  const results: string[] = [];
-  result.forEach((relationship) => {
-    if (!relationship.is_removed) {
-      results.push(relationship.to.twitter_id);
-    }
+async function fetchLastScrapedMarkedUser() {
+  return await prisma.tUser.findFirst({
+    where: {
+      marked: true,
+    },
+    orderBy: {
+      scrapedAt: 'asc',
+    },
   });
-  return results;
+}
+
+async function fetchDbFollowingOfUserId(userId: string) {
+  const following = await prisma.tConnection.findMany({
+    where: {
+      fromId: userId,
+    },
+    distinct: ['fromId', 'toId'],
+    orderBy: {
+      version: 'desc',
+    },
+    select: {
+      toId: true,
+      status: true,
+    },
+  });
+
+  return following
+    .filter((x) => x.status === ConnectionStatus.CONNECTED)
+    .map((x) => x.toId);
 }
 
 function computeChanges(__old: string[], __new: string[]) {
   const _old = new Set(__old);
   const _new = new Set(__new);
 
-  const added = new Set([..._new].filter((x) => !_old.has(x)));
-  const removed = new Set([..._old].filter((x) => !_new.has(x)));
-  //const unchanged = new Set([..._old].filter((x) => _new.has(x)));
-
-  return { added: added, removed: removed };
+  return {
+    added: new Set([..._new].filter((x) => !_old.has(x))),
+    removed: new Set([..._old].filter((x) => !_new.has(x))),
+  };
 }
-
-async function fetchDbUserByUserId(userId: string) {
-  const twitterUserRepository = getRepository(TwitterUser);
-  const twitterUser = await twitterUserRepository.findOne({
-    where: { twitter_id: userId },
+async function fetchOrCreateUser(newUser: UserV2) {
+  const existingUser = await prisma.tUser.findUnique({
+    where: { id: newUser.id },
   });
-  return twitterUser;
-}
-
-async function fetchDbUserByUserName(userName: string) {
-  const twitterUserRepository = getRepository(TwitterUser);
-  const twitterUser = await twitterUserRepository.findOne({
-    where: { twitter_username: userName },
-  });
-  return twitterUser;
-}
-
-async function createUser(
-  userInfo: UserV2,
-  isWatched = false,
-  surpressError = false,
-) {
-  const existingUser = userInfo.id
-    ? await fetchDbUserByUserId(userInfo.id)
-    : await fetchDbUserByUserName(userInfo.username);
 
   if (existingUser) {
     return existingUser;
   }
 
-  if (!userInfo.id) {
-    const result = await fetchTwitterUserByUsername(userInfo.username);
-    if (!result) {
-      if (surpressError) {
-        console.log(`User '${userInfo.username}' does not exist on Twitter.`);
-        return;
-      }
-      throw new Error(`User '${userInfo.username}' does not exist on Twitter.`);
-    }
-    userInfo.id = result.id;
-    userInfo.name = result.name;
-  }
+  const createdUser = await prisma.tUser.create({
+    data: {
+      id: newUser.id,
+      name: newUser.name,
+      username: newUser.username,
+      accountCreatedAt: newUser.created_at,
+      marked: false,
+    },
+  });
 
-  const twitterUserRepository = getRepository(TwitterUser);
-  const record = new TwitterUser();
-  record.twitter_id = userInfo.id;
-  record.twitter_name = userInfo.name;
-  record.twitter_username = userInfo.username;
-  record.is_watched = isWatched;
-
-  console.log('Created user:', record.twitter_username);
-  return await twitterUserRepository.save(record);
+  console.log('Created new user:', newUser.username);
+  return createdUser;
 }
 
 async function _savefollowedChanges(
-  user: TwitterUser,
+  user: TUser,
   followedUsers: UserV2[],
   followedUserId: string,
   is_removed = false,
 ) {
-  const twitterRelationshipRepository = getRepository(TwitterRelationship);
   const followedUserInfo = followedUsers.find((x) => x.id === followedUserId);
-  const followedUser =
-    (await fetchDbUserByUserId(followedUserInfo.id)) ??
-    (await createUser(followedUserInfo));
+  const followedUser = followedUserInfo
+    ? await fetchOrCreateUser(followedUserInfo)
+    : await prisma.tUser.findUnique({ where: { id: followedUserId } }); // If the info is undefined, this user is being removed
 
-  const record = new TwitterRelationship();
-  record.from = user;
-  record.to = followedUser;
-  record.is_removed = is_removed;
+  const previousConnection = await prisma.tConnection.findFirst({
+    where: { fromId: user.id, toId: followedUser.id },
+    orderBy: { version: 'desc' },
+  });
 
-  //console.log('Created relationship from to', user, followedUser);
-  return await twitterRelationshipRepository.save(record);
+  const version = previousConnection ? previousConnection.version + 1 : 0;
+  const status = is_removed
+    ? ConnectionStatus.DISCONNECTED
+    : ConnectionStatus.CONNECTED;
+  const connection = await prisma.tConnection.create({
+    data: {
+      from: { connect: { id: user.id } },
+      to: { connect: { id: followedUser.id } },
+      version: version,
+      status: status,
+    },
+  });
+
+  return connection;
 }
 
 async function savefollowedChanges(
-  user: TwitterUser,
+  user: TUser,
   followedUsers: UserV2[],
   changes: {
     added: Set<string>;
@@ -225,38 +210,57 @@ async function savefollowedChanges(
   }
 }
 
-async function saveUserScraped(user: TwitterUser) {
-  const twitterUserRepository = getRepository(TwitterUser);
-  user.scraped_at = new Date();
-  return await twitterUserRepository.save(user);
+async function createMarkedUserFromUsername(userName: string) {
+  const existingUser = await prisma.tUser.findFirst({
+    where: { username: { equals: userName, mode: 'insensitive' } },
+  });
+  if (existingUser) {
+    return existingUser;
+  }
+
+  const user = await fetchTwitterUserByUsername(userName);
+  if (!user) {
+    console.log('Could not find Twitter account:', userName);
+    return;
+  }
+
+  console.log('Created new user:', user.username);
+  return await prisma.tUser.create({
+    data: {
+      id: user.id,
+      name: user.name,
+      username: user.username,
+      accountCreatedAt: user.created_at,
+      marked: true,
+    },
+  });
+}
+
+async function updateMarkedUser(user: TUser) {
+  const updatedUser = await prisma.tUser.update({
+    where: {
+      id: user.id,
+    },
+    data: {
+      scrapedAt: new Date(),
+    },
+  });
+  return updatedUser;
 }
 
 async function scrape() {
   try {
     // Get the marked user that was last scraped
-    const markedUser = await fetchStaleUser();
-
-    // Check that the twitter_id is defined for this user, otherwise fetch it
-    // if (!markedUser.twitter_id) {
-    //   const twitterUser = await fetchTwitterUserByUsername(
-    //     markedUser.twitter_username,
-    //   );
-    //   markedUser.twitter_id = twitterUser.id;
-    //   markedUser.twitter_name = twitterUser.name;
-    //   const twitterUserRepository = getRepository(TwitterUser);
-    //   twitterUserRepository.save(markedUser);
-    // }
+    const markedUser = await fetchLastScrapedMarkedUser();
     console.log('Scraping:', markedUser);
 
     // Fetch the old followed from database
-    const oldfollowed = await fetchDbfollowedOfUserId(markedUser.twitter_id);
+    const oldfollowed = await fetchDbFollowingOfUserId(markedUser.id);
 
     // Fetch the current followed from twitter API
-    const newfollowed = await fetchTwitterFollowingByUserId(
-      markedUser.twitter_id,
-    );
+    const newfollowed = await fetchTwitterFollowingByUserId(markedUser.id);
 
-    // Compute the changes
+    // Compute the changes in following
     const changes = computeChanges(
       oldfollowed,
       newfollowed.map((e) => e.id),
@@ -269,7 +273,7 @@ async function scrape() {
     await savefollowedChanges(markedUser, newfollowed, changes);
 
     // Set last scraped of user to now
-    await saveUserScraped(markedUser);
+    await updateMarkedUser(markedUser);
   } catch (error) {
     if (error instanceof ApiResponseError || error instanceof ApiRequestError) {
       console.log('Encountered error requesting data from Twitter', error);
@@ -278,22 +282,16 @@ async function scrape() {
 }
 
 async function main(accounts: string[]) {
-  const dbConn: Connection = await createConnection();
-  await dbConn.synchronize();
-
-  for (const account of accounts) {
-    await createUser(
-      { id: undefined, name: undefined, username: account },
-      true,
-      true,
-    );
+  for (const username of accounts) {
+    await createMarkedUserFromUsername(username);
   }
+
   let iteration = 0;
   while (true) {
     await scrape();
-    console.log(`Finished iteration (${iteration}) waiting for two minutes...`);
+    console.log(`Finished iteration (${iteration}) waiting for 1.5 minutes...`);
     iteration += 1;
-    await sleep(1000 * 60 * 2); // Scrape every two minutes
+    await sleep(1000 * 60 * 1.5); // Scrape every two minutes
   }
 }
 
@@ -417,4 +415,12 @@ const markerAccounts = [
   '0xSami_',
 ];
 
-main(markerAccounts.map((acc) => acc.replace('@', '')));
+const test = ['esa_was_taken', '@0x9116'];
+
+main(markerAccounts.map((acc) => acc.replace('@', '')))
+  .catch((e) => {
+    throw e;
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

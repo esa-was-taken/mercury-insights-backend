@@ -1,22 +1,19 @@
-import { Module } from '@nestjs/common';
+import { Module, ClassSerializerInterceptor } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
+import { UserService } from './user/user.service';
+import { UserController } from './user/user.controller';
+import { PrismaService } from './prisma.service';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 
 @Module({
-  imports: [
-    TypeOrmModule.forRoot({
-      type: 'postgres',
-      host: 'localhost',
-      port: 3306,
-      username: 'mercury',
-      password: 'mercury',
-      database: 'mercurydb',
-      entities: [],
-      synchronize: true,
-    }),
+  controllers: [UserController],
+  providers: [
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: ClassSerializerInterceptor,
+    },
+    PrismaService,
+    UserService,
   ],
-  controllers: [AppController],
-  providers: [AppService],
 })
 export class AppModule {}
