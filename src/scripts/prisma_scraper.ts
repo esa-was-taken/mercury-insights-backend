@@ -60,7 +60,23 @@ async function _fetchTwitterFollowingByUserId(userId: string) {
   const request = await client.v2.following(userId, {
     asPaginator: true,
     max_results: 1000,
-    'user.fields': 'created_at',
+    'user.fields': [
+      'created_at',
+      'description',
+      'entities',
+      'id',
+      'location',
+      'name',
+      'pinned_tweet_id',
+      'profile_image_url',
+      'protected',
+      'public_metrics',
+      'url',
+      'username',
+      'verified',
+      'withheld',
+    ],
+    expansions: 'pinned_tweet_id',
   });
 
   const followers: UserV2[] = [];
@@ -81,7 +97,7 @@ async function _fetchTwitterFollowingByUserId(userId: string) {
 }
 
 async function fetchTwitterFollowingByUserId(userId: string) {
-  return await  _fetchTwitterFollowingByUserId(userId);
+  return await _fetchTwitterFollowingByUserId(userId);
   // return await autoRetryOnRateLimitError(() =>
   //   _fetchTwitterFollowingByUserId(userId),
   // );
@@ -139,27 +155,67 @@ function computeChanges(__old: string[], __new: string[]) {
     removed: new Set([..._old].filter((x) => !_new.has(x))),
   };
 }
-async function fetchOrCreateUser(newUser: UserV2) {
-  const existingUser = await prisma.tUser.findUnique({
-    where: { id: newUser.id },
-  });
+async function upsertUser(newUser: UserV2) {
+  const twitterMetaData = {
+    createdAt: newUser.created_at,
+    description: newUser.description,
+    entities: newUser.entities ? JSON.stringify(newUser.entities) : undefined,
+    location: newUser.location,
+    pinned_tweet_id: newUser.pinned_tweet_id,
+    profile_image_url: newUser.profile_image_url,
+    protected: newUser.verified,
+    url: newUser.url,
+    verified: newUser.verified,
+  };
 
-  if (existingUser) {
-    return existingUser;
-  }
+  const twitterPublicMetrics = {
+    followers_count: newUser.public_metrics?.followers_count,
+    following_count: newUser.public_metrics?.following_count,
+    tweet_count: newUser.public_metrics?.tweet_count,
+    listed_count: newUser.public_metrics?.listed_count,
+  };
 
-  const createdUser = await prisma.tUser.create({
-    data: {
-      id: newUser.id,
-      name: newUser.name,
-      username: newUser.username,
-      accountCreatedAt: newUser.created_at,
-      marked: false,
+  const userCreate = {
+    id: newUser.id,
+    name: newUser.name,
+    username: newUser.username,
+    accountCreatedAt: newUser.created_at,
+    marked: false,
+    twitterMetaData: {
+      create: twitterMetaData,
     },
+    twitterPublicMetrics: {
+      create: twitterPublicMetrics,
+    },
+  };
+
+  const userUpsert = {
+    id: newUser.id,
+    name: newUser.name,
+    username: newUser.username,
+    accountCreatedAt: newUser.created_at,
+    marked: false,
+    twitterMetaData: {
+      upsert: {
+        create: twitterMetaData,
+        update: twitterMetaData,
+      },
+    },
+    twitterPublicMetrics: {
+      upsert: {
+        create: twitterPublicMetrics,
+        update: twitterPublicMetrics,
+      },
+    },
+  };
+
+  const upsertedUser = await prisma.tUser.upsert({
+    where: { id: newUser.id },
+    create: userCreate,
+    update: userUpsert,
   });
 
-  console.log('Created new user:', newUser.username);
-  return createdUser;
+  return upsertedUser;
 }
 
 async function _savefollowedChanges(
@@ -170,7 +226,7 @@ async function _savefollowedChanges(
 ) {
   const followedUserInfo = followedUsers.find((x) => x.id === followedUserId);
   const followedUser = followedUserInfo
-    ? await fetchOrCreateUser(followedUserInfo)
+    ? await upsertUser(followedUserInfo)
     : await prisma.tUser.findUnique({ where: { id: followedUserId } }); // If the info is undefined, this user is being removed
 
   const previousConnection = await prisma.tConnection.findFirst({
@@ -250,37 +306,36 @@ async function updateMarkedUser(user: TUser) {
 }
 
 async function _scrape() {
-    // Get the marked user that was last scraped
-    const markedUser = await fetchLastScrapedMarkedUser();
-    console.log('Scraping:', markedUser);
+  // Get the marked user that was last scraped
+  const markedUser = await fetchLastScrapedMarkedUser();
+  console.log('Scraping:', markedUser);
 
-    // Fetch the old followed from database
-    const oldfollowed = await fetchDbFollowingOfUserId(markedUser.id);
+  // Fetch the old followed from database
+  const oldfollowed = await fetchDbFollowingOfUserId(markedUser.id);
 
-    // Fetch the current followed from twitter API
-    const newfollowed = await fetchTwitterFollowingByUserId(markedUser.id);
+  // Fetch the current followed from twitter API
+  const newfollowed = await fetchTwitterFollowingByUserId(markedUser.id);
 
-    // Compute the changes in following
-    const changes = computeChanges(
-      oldfollowed,
-      newfollowed.map((e) => e.id),
-    );
-    console.log(
-      `Changes in following:\n\tadded(${changes.added.size})\n\tremoved(${changes.removed.size})`,
-    );
+  // Compute the changes in following
+  const changes = computeChanges(
+    oldfollowed,
+    newfollowed.map((e) => e.id),
+  );
+  console.log(
+    `Changes in following:\n\tadded(${changes.added.size})\n\tremoved(${changes.removed.size})`,
+  );
 
-    // Save changes to database
-    await savefollowedChanges(markedUser, newfollowed, changes);
+  // Save changes to database
+  await savefollowedChanges(markedUser, newfollowed, changes);
 
-    // Set last scraped of user to now
-    await updateMarkedUser(markedUser);
- 
+  // Set last scraped of user to now
+  await updateMarkedUser(markedUser);
 }
 
 async function scrape() {
-  console.log("Starting scrape...", new Date().toISOString());
+  console.log('Starting scrape...', new Date().toISOString());
   await _scrape();
-  console.log("Finished scrape...", new Date().toISOString());
+  console.log('Finished scrape...', new Date().toISOString());
 }
 
 async function main(accounts: string[]) {
@@ -288,8 +343,7 @@ async function main(accounts: string[]) {
     await createMarkedUserFromUsername(username);
   }
 
-  let iteration = 0;
-  const DEFAULT_DELAY = 1000*60*1;
+  const DEFAULT_DELAY = 1000 * 60 * 1;
   let current_delay = 1;
   let timerId = setTimeout(async function request() {
     current_delay = DEFAULT_DELAY;
@@ -301,21 +355,24 @@ async function main(accounts: string[]) {
           error.rateLimitError &&
           error.rateLimit) ||
         (error instanceof CustomRatelimitError && error.rateLimit)
-      ) { 
+      ) {
         const resetTimeout = error.rateLimit.reset * 1000; // convert to ms time instead of seconds time
         const timeToWait = resetTimeout - Date.now();
         console.log(
           `Ratelimited: sleeping for ${timeToWait / 1000.0 / 60.0} minutes`,
         );
         current_delay = timeToWait;
-      } else if (error instanceof ApiResponseError || error instanceof ApiRequestError) {
+      } else if (
+        error instanceof ApiResponseError ||
+        error instanceof ApiRequestError
+      ) {
         console.log('Encountered error requesting data from Twitter', error);
-      }  else {
+      } else {
         throw error;
       }
     }
-    timerId = setTimeout(request, current_delay);   
-  }, current_delay)
+    timerId = setTimeout(request, current_delay);
+  }, current_delay);
 
   //setInterval(async () => await scrape(), 1000*60*2);
   // while (true) {
@@ -327,7 +384,7 @@ async function main(accounts: string[]) {
   //     await sleep((1000 * 60 * 1.5)/10); // Scrape every two minutes
   //     console.log("...", index)
   //   }
-   
+
   // }
 }
 

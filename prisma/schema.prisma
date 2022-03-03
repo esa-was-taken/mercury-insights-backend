@@ -17,15 +17,50 @@ model TUser {
   username         String
   following        TConnection[] @relation("following")
   followers        TConnection[] @relation("followers")
-  accountCreatedAt DateTime?
+  accountCreatedAt DateTime? // To be removed
   accountExists    Boolean?
   marked           Boolean       @default(false)
   scrapedAt        DateTime      @default(now())
   createdAt        DateTime      @default(now())
 
+
+  twitterMetaData      TUserMetadata?
+  twitterPublicMetrics TUserPublicMetrics?
+
   @@index([username])
   @@index([marked], type: Hash)
   @@index([scrapedAt])
+}
+
+model TUserMetadata {
+  tUser   TUser  @relation(fields: [tUserId], references: [id])
+  tUserId String @unique
+
+  createdAt         DateTime?
+  description       String?
+  entities          Json?
+  location          String?
+  pinned_tweet_id   String?
+  profile_image_url String?
+  protected         Boolean?
+  url               String?
+  verified          Boolean?
+
+  recordCreatedAt DateTime @default(now())
+  recordUpdatedAt DateTime @updatedAt
+}
+
+model TUserPublicMetrics {
+  tUser   TUser  @relation(fields: [tUserId], references: [id])
+  tUserId String @unique
+
+  followers_count Int?
+  following_count Int?
+  tweet_count     Int?
+  listed_count    Int?
+
+  recordCreatedAt DateTime @default(now())
+  recordUpdatedAt DateTime @updatedAt
 }
 
 enum ConnectionStatus {
@@ -49,3 +84,32 @@ model TConnection {
   @@index([fromId, toId, version(sort: Desc)])
   @@index([createdAt])
 }
+
+// model TConnection {
+//   from         TUser              @relation("following", fields: [fromId], references: [id], onDelete: Cascade)
+//   fromId       String
+//   to           TUser              @relation("followers", fields: [toId], references: [id], onDelete: Cascade)
+//   toId         String
+//   version      TConnectionVersion @relation("version", fields: [fromId, toId, versionValue], references: [fromId, toId, version], onDelete: Cascade)
+//   versionValue Int
+//   createdAt    DateTime           @default(now())
+//   updatedAt    DateTime           @default(now()) @updatedAt
+
+//   @@id([fromId, toId])
+//   @@index([fromId])
+//   @@index([toId])
+// }
+
+// model TConnectionVersion {
+//   fromId    String
+//   toId      String
+//   version   Int
+//   status    ConnectionStatus
+//   createdAt DateTime         @default(now())
+
+//   TConnection TConnection[] @relation("version")
+//   @@id([fromId, toId, version])
+//   @@index([fromId])
+//   @@index([toId])
+//   @@index([createdAt])
+// }
