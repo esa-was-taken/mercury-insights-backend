@@ -81,9 +81,10 @@ async function _fetchTwitterFollowingByUserId(userId: string) {
 }
 
 async function fetchTwitterFollowingByUserId(userId: string) {
-  return await autoRetryOnRateLimitError(() =>
-    _fetchTwitterFollowingByUserId(userId),
-  );
+  return await  _fetchTwitterFollowingByUserId(userId);
+  // return await autoRetryOnRateLimitError(() =>
+  //   _fetchTwitterFollowingByUserId(userId),
+  // );
 }
 
 async function fetchTwitterUserByUsername(userName: string) {
@@ -248,8 +249,7 @@ async function updateMarkedUser(user: TUser) {
   return updatedUser;
 }
 
-async function scrape() {
-  try {
+async function _scrape() {
     // Get the marked user that was last scraped
     const markedUser = await fetchLastScrapedMarkedUser();
     console.log('Scraping:', markedUser);
@@ -274,11 +274,13 @@ async function scrape() {
 
     // Set last scraped of user to now
     await updateMarkedUser(markedUser);
-  } catch (error) {
-    if (error instanceof ApiResponseError || error instanceof ApiRequestError) {
-      console.log('Encountered error requesting data from Twitter', error);
-    }
-  }
+ 
+}
+
+async function scrape() {
+  console.log("Starting scrape...", new Date().toISOString());
+  await _scrape();
+  console.log("Finished scrape...", new Date().toISOString());
 }
 
 async function main(accounts: string[]) {
@@ -287,12 +289,46 @@ async function main(accounts: string[]) {
   }
 
   let iteration = 0;
-  while (true) {
-    await scrape();
-    console.log(`Finished iteration (${iteration}) waiting for 1.5 minutes...`);
-    iteration += 1;
-    await sleep(1000 * 60 * 1.5); // Scrape every two minutes
-  }
+  const DEFAULT_DELAY = 1000*60*1;
+  let current_delay = 1;
+  let timerId = setTimeout(async function request() {
+    current_delay = DEFAULT_DELAY;
+    try {
+      await scrape();
+    } catch (error) {
+      if (
+        (error instanceof ApiResponseError &&
+          error.rateLimitError &&
+          error.rateLimit) ||
+        (error instanceof CustomRatelimitError && error.rateLimit)
+      ) { 
+        const resetTimeout = error.rateLimit.reset * 1000; // convert to ms time instead of seconds time
+        const timeToWait = resetTimeout - Date.now();
+        console.log(
+          `Ratelimited: sleeping for ${timeToWait / 1000.0 / 60.0} minutes`,
+        );
+        current_delay = timeToWait;
+      } else if (error instanceof ApiResponseError || error instanceof ApiRequestError) {
+        console.log('Encountered error requesting data from Twitter', error);
+      }  else {
+        throw error;
+      }
+    }
+    timerId = setTimeout(request, current_delay);   
+  }, current_delay)
+
+  //setInterval(async () => await scrape(), 1000*60*2);
+  // while (true) {
+  //   await scrape();
+  //   console.log(`Finished iteration (${iteration}) waiting for 1.5 minutes...`);
+  //   iteration += 1;
+
+  //   for (let index = 0; index < 10; index++) {
+  //     await sleep((1000 * 60 * 1.5)/10); // Scrape every two minutes
+  //     console.log("...", index)
+  //   }
+   
+  // }
 }
 
 const markerAccounts = [
