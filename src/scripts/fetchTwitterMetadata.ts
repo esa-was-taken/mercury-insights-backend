@@ -21,7 +21,6 @@ function sleep(ms: number) {
 
 async function main() {
   while (true) {
-    // Fetch 100 accounts with no accountCreatedAt value
     const tUsers = await prisma.tUser.findMany({
       where: {
         OR: [{ accountExists: null }, { accountExists: true }],
@@ -142,81 +141,7 @@ async function main() {
   }
 }
 
-async function test() {
-  const test2 = await prisma.tUser.groupBy({
-    by: ['id'],
-    where: {
-      followers: {
-        every: {
-          version: {
-            status: 'CONNECTED',
-          },
-        },
-      },
-    },
-    _count: {},
-    orderBy: {
-      _count: {},
-    },
-  });
-
-  const test = await prisma.tUser.findMany({
-    where: {
-      followers: {
-        every: {
-          version: {
-            status: 'CONNECTED',
-          },
-        },
-      },
-    },
-    orderBy: { followers: { _count: 'desc' } },
-    include: {
-      _count: {
-        select: { followers: true },
-      },
-      followers: {
-        distinct: ['fromId', 'toId'],
-        orderBy: [{ fromId: 'asc' }, { toId: 'asc' }, { version: 'desc' }],
-        include: {
-          _count: {},
-        },
-      },
-    },
-    take: 1,
-  });
-  const popular = await prisma.$queryRaw`
-      SELECT *
-      FROM
-        (SELECT COUNT(CONN."toId") AS FOLLOWERS,
-            U.*
-          FROM PUBLIC."TUser" U
-          LEFT JOIN
-            (SELECT *
-              FROM
-                (SELECT DISTINCT ON (_INNER."fromId",
-                                                            _INNER."toId") _INNER."fromId",
-                    _INNER."toId",
-                    _INNER."status",
-                    _INNER."version",
-                    _INNER."createdAt"
-                  FROM PUBLIC."TConnection" _INNER
-                  ORDER BY _INNER."fromId",
-                    _INNER."toId",
-                    _INNER."version" DESC) CONN
-              WHERE CONN."status" = 'CONNECTED') CONN ON U.ID = CONN."toId"
-          GROUP BY U.ID
-          ORDER BY FOLLOWERS DESC) U
-      LEFT JOIN PUBLIC."TUserMetadata" AS MD ON U.ID = MD."tUserId"
-      LEFT JOIN PUBLIC."TUserPublicMetrics" AS PM ON U.ID = PM."tUserId"
-      OFFSET 0
-      LIMIT 1
-    `;
-  console.log(test);
-  console.log(popular);
-}
-
-test()
+main()
   .catch((e) => {
     throw e;
   })

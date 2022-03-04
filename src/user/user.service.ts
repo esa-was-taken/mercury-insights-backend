@@ -8,9 +8,6 @@ import {
 } from 'src/interfaces/user.interface';
 import { PrismaService } from 'src/prisma.service';
 
-// TODO: I am fairly certain we can do away with all the raw SQL
-// but I cant quite figure out how I only grab the most recent
-// TConnection within the Prisma syntax.
 @Injectable()
 export class UserService {
   constructor(private prisma: PrismaService) {}
@@ -31,10 +28,9 @@ export class UserService {
     limit = 100,
     offset = 0,
   ): Promise<UserWithFollowers[]> {
-    type TUserWithFollowers = TUser &
-      TUserMetadata & {
-        followers: number;
-      };
+    type TUserWithFollowers = TUser & {
+      followers: number;
+    };
 
     const popular = await this.prisma.$queryRaw<TUserWithFollowers[]>` 
       SELECT *
