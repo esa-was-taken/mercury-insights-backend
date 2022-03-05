@@ -1,0 +1,73 @@
+import {
+  ClassSerializerInterceptor,
+  Controller,
+  Get,
+  Param,
+  Query,
+  UseInterceptors,
+} from '@nestjs/common';
+import { IsDate } from 'class-validator';
+import {
+  User,
+  UserFollowersDiff,
+  UserWithFollowers,
+} from 'src/interfaces/user.interface';
+import { IntervalDto, PaginateDto } from './dto';
+import { UserService } from './user.service';
+
+@Controller('user')
+export class UserController {
+  constructor(private userService: UserService) {}
+
+  @Get('/popular')
+  async listMostFollowedUsers(
+    @Query() query: PaginateDto,
+  ): Promise<UserWithFollowers[]> {
+    return await this.userService.mostFollowedUsers(query.limit, query.offset);
+  }
+
+  @Get('/trending')
+  async listMostTrendingUsers(
+    @Query() query: IntervalDto,
+  ): Promise<UserFollowersDiff[]> {
+    return await this.userService.mostTrendingUsers(
+      query.start,
+      query.end,
+      query.limit,
+      query.offset,
+    );
+  }
+  @Get(':id')
+  async getUser(@Param() params): Promise<User> {
+    return await this.userService.getUser(params.id);
+  }
+
+  @Get('/by/username/:userName')
+  async getUserByUserName(@Param() params): Promise<User> {
+    return await this.userService.getUserByUserName(params.userName);
+  }
+
+  @Get(':id/followers')
+  async listFollowersOfUser(
+    @Param() params,
+    @Query() query: PaginateDto,
+  ): Promise<User[]> {
+    return await this.userService.findFollowersOf(
+      params.id,
+      query.limit,
+      query.offset,
+    );
+  }
+
+  @Get(':id/following')
+  async listFollowingOfUser(
+    @Param() params,
+    @Query() query: PaginateDto,
+  ): Promise<User[]> {
+    return await this.userService.findFollowingOf(
+      params.id,
+      query.limit,
+      query.offset,
+    );
+  }
+}
