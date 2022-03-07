@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { TUser, Prisma } from '@prisma/client';
-import { interval } from 'rxjs';
+import {
+  TUser,
+  Prisma,
+  TUserMetadata,
+  TUserPublicMetrics,
+} from '@prisma/client';
+import { interval, ObjectUnsubscribedError } from 'rxjs';
 import {
   User,
   UserWithFollowers,
@@ -30,10 +35,12 @@ export class UserService {
   ): Promise<UserWithFollowers[]> {
     type TUserWithFollowers = TUser & {
       followers: number;
+      metadata: TUserMetadata;
+      public_metrics: TUserPublicMetrics;
     };
 
     const popular = await this.prisma.$queryRaw<TUserWithFollowers[]>` 
-      SELECT *
+      SELECT U.*, row_to_json(MD.*) as metadata, row_to_json(PM.*) as public_metrics
       FROM
         (SELECT COUNT(CONN."toId") AS FOLLOWERS,
             U.*
@@ -61,11 +68,7 @@ export class UserService {
     `;
     return popular.map((x) => {
       return {
-        id: x.id,
-        name: x.name,
-        username: x.username,
-        followers: x.followers,
-        marked: x.marked,
+        ...x,
       } as UserWithFollowers;
     });
   }
@@ -87,17 +90,18 @@ export class UserService {
     }
 
     type CustomTUserFollowingDiff = TUser & {
-      diff: number;
+      difference: number;
+      metadata: TUserMetadata;
+      public_metrics: TUserPublicMetrics;
     };
 
     const trending = await this.prisma.$queryRaw<CustomTUserFollowingDiff[]>`
-  SELECT T1.ID,
-	T1.NAME,
-	T1.USERNAME,
+  SELECT T1.*
+  row_to_json(MD.*) as metadata, row_to_json(PM.*) as public_metrics
 	COALESCE(T1.FOLLOWERS,
 		0) - COALESCE(T2.FOLLOWERS,
 
-								0) AS DIFF
+								0) AS DIFFERENCE
 FROM
 	(SELECT ID,
 			NAME,
@@ -143,14 +147,13 @@ FULL JOIN
 				WHERE CONN."status" = 'CONNECTED') CONN ON U.ID = CONN."toId"
 		GROUP BY U.ID) AS T2 USING(ID)
 ORDER BY DIFF DESC
+LEFT JOIN PUBLIC."TUserMetadata" AS MD ON T1.ID = MD."tUserId"
+      LEFT JOIN PUBLIC."TUserPublicMetrics" AS PM ON T1.ID = PM."tUserId"
 LIMIT ${Math.trunc(limit)}
 OFFSET ${Math.trunc(offset)};`;
     return trending.map((x) => {
       return {
-        id: x.id,
-        name: x.name,
-        username: x.username,
-        difference: x.diff,
+        ...x,
       } as UserFollowersDiff;
     });
   }
