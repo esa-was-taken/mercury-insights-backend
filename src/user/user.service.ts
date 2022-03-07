@@ -96,8 +96,8 @@ export class UserService {
     };
 
     const trending = await this.prisma.$queryRaw<CustomTUserFollowingDiff[]>`
-  SELECT T1.*
-  row_to_json(MD.*) as metadata, row_to_json(PM.*) as public_metrics
+  SELECT T1.*,
+  row_to_json(MD.*) as metadata, row_to_json(PM.*) as public_metrics,
 	COALESCE(T1.FOLLOWERS,
 		0) - COALESCE(T2.FOLLOWERS,
 
@@ -146,9 +146,9 @@ FULL JOIN
 							_INNER."version" DESC) CONN
 				WHERE CONN."status" = 'CONNECTED') CONN ON U.ID = CONN."toId"
 		GROUP BY U.ID) AS T2 USING(ID)
-ORDER BY DIFF DESC
 LEFT JOIN PUBLIC."TUserMetadata" AS MD ON T1.ID = MD."tUserId"
-      LEFT JOIN PUBLIC."TUserPublicMetrics" AS PM ON T1.ID = PM."tUserId"
+LEFT JOIN PUBLIC."TUserPublicMetrics" AS PM ON T1.ID = PM."tUserId"
+ORDER BY DIFFERENCE DESC
 LIMIT ${Math.trunc(limit)}
 OFFSET ${Math.trunc(offset)};`;
     return trending.map((x) => {
