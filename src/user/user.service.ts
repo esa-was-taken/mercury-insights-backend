@@ -23,15 +23,27 @@ export class UserService {
   constructor(private prisma: PrismaService) {}
 
   async getUser(userId: string): Promise<User> {
-    const user = await this.prisma.tUser.findUnique({ where: { id: userId } });
-    return { id: user.id, username: user.username, name: user.name } as User;
+    const user = await this.prisma.tUser.findUnique({
+      where: { id: userId },
+      include: { twitterMetaData: true, twitterPublicMetrics: true },
+    });
+    return {
+      ...user,
+      metadata: user.twitterMetaData ?? ({} as UserMetadata),
+      public_metrics: user.twitterPublicMetrics ?? ({} as UserPublicMetrics),
+    } as User;
   }
 
   async getUserByUserName(userName: string): Promise<User> {
     const user = await this.prisma.tUser.findFirst({
       where: { username: userName },
+      include: { twitterMetaData: true, twitterPublicMetrics: true },
     });
-    return { id: user.id, username: user.username, name: user.name } as User;
+    return {
+      ...user,
+      metadata: user.twitterMetaData ?? ({} as UserMetadata),
+      public_metrics: user.twitterPublicMetrics ?? ({} as UserPublicMetrics),
+    } as User;
   }
 
   async mostFollowedUsers(): Promise<UserWithFollowers[]> {
@@ -61,8 +73,7 @@ export class UserService {
                     _INNER."toId",
                     _INNER."version" DESC) CONN
               WHERE CONN."status" = 'CONNECTED') CONN ON U.ID = CONN."toId"
-          GROUP BY U.ID
-          ORDER BY FOLLOWERS DESC) U
+          GROUP BY U.ID) U
       LEFT JOIN PUBLIC."TUserMetadata" AS MD ON U.ID = MD."tUserId"
       LEFT JOIN PUBLIC."TUserPublicMetrics" AS PM ON U.ID = PM."tUserId";
     `;
