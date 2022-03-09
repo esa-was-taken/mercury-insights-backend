@@ -1,3 +1,5 @@
+import { GridFilterModel, GridSortModel } from '@mui/x-data-grid-pro';
+import { GridFilteringMethod } from '@mui/x-data-grid/internals';
 import { Injectable } from '@nestjs/common';
 import {
   TUser,
@@ -10,8 +12,11 @@ import {
   User,
   UserWithFollowers,
   UserFollowersDiff,
+  UserMetadata,
+  UserPublicMetrics,
 } from 'src/interfaces/user.interface';
 import { PrismaService } from 'src/prisma.service';
+import { GridSortItemDto } from './dto';
 
 @Injectable()
 export class UserService {
@@ -29,10 +34,7 @@ export class UserService {
     return { id: user.id, username: user.username, name: user.name } as User;
   }
 
-  async mostFollowedUsers(
-    limit = 100,
-    offset = 0,
-  ): Promise<UserWithFollowers[]> {
+  async mostFollowedUsers(): Promise<UserWithFollowers[]> {
     type TUserWithFollowers = TUser & {
       followers: number;
       metadata: TUserMetadata;
@@ -62,13 +64,13 @@ export class UserService {
           GROUP BY U.ID
           ORDER BY FOLLOWERS DESC) U
       LEFT JOIN PUBLIC."TUserMetadata" AS MD ON U.ID = MD."tUserId"
-      LEFT JOIN PUBLIC."TUserPublicMetrics" AS PM ON U.ID = PM."tUserId"
-      OFFSET ${offset} 
-      LIMIT ${limit}
+      LEFT JOIN PUBLIC."TUserPublicMetrics" AS PM ON U.ID = PM."tUserId";
     `;
     return popular.map((x) => {
       return {
         ...x,
+        metadata: x.metadata ?? ({} as UserMetadata),
+        public_metrics: x.public_metrics ?? ({} as UserPublicMetrics),
       } as UserWithFollowers;
     });
   }
@@ -76,8 +78,6 @@ export class UserService {
   async mostTrendingUsers(
     intervalStart: Date,
     intervalEnd: Date,
-    limit = 100,
-    offset = 0,
   ): Promise<UserFollowersDiff[]> {
     if (!intervalStart && !intervalEnd) {
       intervalStart = new Date();
@@ -90,6 +90,7 @@ export class UserService {
     }
 
     type CustomTUserFollowingDiff = TUser & {
+      followers: number;
       difference: number;
       metadata: TUserMetadata;
       public_metrics: TUserPublicMetrics;
@@ -101,7 +102,7 @@ export class UserService {
 	COALESCE(T1.FOLLOWERS,
 		0) - COALESCE(T2.FOLLOWERS,
 
-								0) AS DIFFERENCE
+								0) AS difference
 FROM
 	(SELECT ID,
 			NAME,
@@ -147,13 +148,12 @@ FULL JOIN
 				WHERE CONN."status" = 'CONNECTED') CONN ON U.ID = CONN."toId"
 		GROUP BY U.ID) AS T2 USING(ID)
 LEFT JOIN PUBLIC."TUserMetadata" AS MD ON T1.ID = MD."tUserId"
-LEFT JOIN PUBLIC."TUserPublicMetrics" AS PM ON T1.ID = PM."tUserId"
-ORDER BY DIFFERENCE DESC
-LIMIT ${Math.trunc(limit)}
-OFFSET ${Math.trunc(offset)};`;
+LEFT JOIN PUBLIC."TUserPublicMetrics" AS PM ON T1.ID = PM."tUserId";`;
     return trending.map((x) => {
       return {
         ...x,
+        metadata: x.metadata ?? ({} as UserMetadata),
+        public_metrics: x.public_metrics ?? ({} as UserPublicMetrics),
       } as UserFollowersDiff;
     });
   }

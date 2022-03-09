@@ -1,11 +1,15 @@
-import { Module, ClassSerializerInterceptor } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { UserService } from './user/user.service';
-import { UserController } from './user/user.controller';
-import { PrismaService } from './prisma.service';
+import {
+  CacheModule,
+  ClassSerializerInterceptor,
+  Module,
+} from '@nestjs/common';
 import { APP_INTERCEPTOR } from '@nestjs/core';
+import { PrismaService } from './prisma.service';
+import { UserController } from './user/user.controller';
+import { UserService } from './user/user.service';
 
 @Module({
+  imports: [CacheModule.register()],
   controllers: [UserController],
   providers: [
     {

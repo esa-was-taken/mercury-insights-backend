@@ -1,4 +1,6 @@
 import {
+  CacheInterceptor,
+  CacheTTL,
   ClassSerializerInterceptor,
   Controller,
   Get,
@@ -12,30 +14,26 @@ import {
   UserFollowersDiff,
   UserWithFollowers,
 } from 'src/interfaces/user.interface';
-import { IntervalDto, PaginateDto } from './dto';
+import { IntervalDto, ListMostTrendingUsersDto, PaginateDto } from './dto';
 import { UserService } from './user.service';
 
+@UseInterceptors(CacheInterceptor)
 @Controller('user')
 export class UserController {
   constructor(private userService: UserService) {}
 
+  @CacheTTL(300)
   @Get('/popular')
-  async listMostFollowedUsers(
-    @Query() query: PaginateDto,
-  ): Promise<UserWithFollowers[]> {
-    return await this.userService.mostFollowedUsers(query.limit, query.offset);
+  async listMostFollowedUsers(): Promise<UserWithFollowers[]> {
+    return await this.userService.mostFollowedUsers();
   }
 
+  @CacheTTL(300)
   @Get('/trending')
   async listMostTrendingUsers(
     @Query() query: IntervalDto,
   ): Promise<UserFollowersDiff[]> {
-    return await this.userService.mostTrendingUsers(
-      query.start,
-      query.end,
-      query.limit,
-      query.offset,
-    );
+    return await this.userService.mostTrendingUsers(query.start, query.end);
   }
   @Get(':id')
   async getUser(@Param() params): Promise<User> {

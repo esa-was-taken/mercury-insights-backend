@@ -31,6 +31,6 @@ export interface UserWithFollowers extends User {
   followers: number;
 }
 
-export interface UserFollowersDiff extends User {
+export interface UserFollowersDiff extends UserWithFollowers {
   difference: number;
 }
