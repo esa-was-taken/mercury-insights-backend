@@ -1,10 +1,12 @@
 import {
+  Body,
   CacheInterceptor,
   CacheTTL,
   ClassSerializerInterceptor,
   Controller,
   Get,
   Param,
+  Post,
   Query,
   UseInterceptors,
 } from '@nestjs/common';
@@ -14,7 +16,12 @@ import {
   UserFollowersDiff,
   UserWithFollowers,
 } from 'src/interfaces/user.interface';
-import { IntervalDto, ListMostTrendingUsersDto, PaginateDto } from './dto';
+import {
+  IntervalDto,
+  ListMostTrendingUsersDto,
+  PaginateDto,
+  UpsertUserDto,
+} from './dto';
 import { UserService } from './user.service';
 
 @UseInterceptors(CacheInterceptor)
@@ -43,6 +50,19 @@ export class UserController {
   @Get('/by/username/:userName')
   async getUserByUserName(@Param() params): Promise<User> {
     return await this.userService.getUserByUserName(params.userName);
+  }
+
+  @Post('/by/username/:userName')
+  async upsertUserByUsername(@Body() upsertUserDto: UpsertUserDto) {
+    return await this.userService.upsertUser(
+      upsertUserDto.username,
+      upsertUserDto.marked,
+    );
+  }
+
+  @Get('/marked')
+  async listMarkedUsers() {
+    return await this.userService.listMarkedUsers();
   }
 
   @Get(':id/followers')

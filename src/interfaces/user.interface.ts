@@ -28,6 +28,7 @@ export interface UserPublicMetrics {
 }
 
 export interface UserWithFollowers extends User {
+  marked_followers_ratio: number;
   followers: number;
 }
 

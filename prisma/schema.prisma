@@ -12,20 +12,27 @@ datasource db {
 }
 
 model TUser {
-  id               String        @id
-  name             String
-  username         String
-  following        TConnection[] @relation("following")
-  followers        TConnection[] @relation("followers")
-  accountCreatedAt DateTime? // To be removed
-  accountExists    Boolean?
-  marked           Boolean       @default(false)
-  scrapedAt        DateTime      @default(now())
-  createdAt        DateTime      @default(now())
+  id                        String        @id
+  name                      String
+  username                  String
+  following                 TConnection[] @relation("following")
+  followers                 TConnection[] @relation("followers")
+  accountCreatedAt          DateTime? // To be removed
+  accountExists             Boolean?
+  marked                    Boolean       @default(false)
+  scrapedAt                 DateTime      @default(now())
+  partialFollowingScrapedAt DateTime      @default(now())
+  fullFollowingScrapedAt    DateTime      @default(now())
+  diffFollowingCount        Int           @default(0)
+  lastFollowingCount        Int           @default(0)
+  profileScrapedAt          DateTime      @default(now())
+  likesScrapedAt            DateTime      @default(now())
+  createdAt                 DateTime      @default(now())
 
 
   twitterMetaData      TUserMetadata?
   twitterPublicMetrics TUserPublicMetrics?
+  likes                TLike[]
 
   @@index([username])
   @@index([marked], type: Hash)
@@ -83,6 +90,66 @@ model TConnection {
   @@index([status], type: Hash)
   @@index([fromId, toId, version(sort: Desc)])
   @@index([createdAt])
+}
+
+model TTweet {
+  id             String   @id
+  tweetText      String
+  createdAt      DateTime
+  authorId       String
+  conversationId String
+
+  referencedTweets    Json?
+  attachments         Json?
+  geo                 Json?
+  context_annotations Json?
+  entities            Json?
+  withheld            Json?
+  possibly_sensitive  Boolean
+  lang                String
+  reply_settings      String
+  source              String
+
+  likes                TLike[]
+  twitterPublicMetrics TTweetPublicMetrics?
+
+  recordCreatedAt DateTime @default(now())
+  recordUpdatedAt DateTime @updatedAt
+}
+
+model TTweetPublicMetrics {
+  tTweet   TTweet @relation(fields: [tTweetId], references: [id])
+  tTweetId String @unique
+
+  retweet_count Int?
+  reply_count   Int?
+  like_count    Int?
+  quote_count   Int?
+
+  recordCreatedAt DateTime @default(now())
+  recordUpdatedAt DateTime @updatedAt
+}
+
+model TLike {
+  tTweet   TTweet @relation(fields: [tTweetId], references: [id])
+  tTweetId String
+  tUser    TUser  @relation(fields: [tUserId], references: [id])
+  tUserId  String
+
+  recordCreatedAt DateTime @default(now())
+  recordUpdatedAt DateTime @updatedAt
+  @@unique([tTweetId, tUserId])
+}
+
+model ScraperData {
+  id                  String   @id
+  ratelimit_limit     Int
+  ratelimit_remaining Int
+  ratelimit_reset     Int
+  data                Json?
+  error               String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 }
 
 // model TConnection {

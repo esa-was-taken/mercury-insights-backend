@@ -1,5 +1,10 @@
 import * as dotenv from 'dotenv';
-import { PrismaClient, ConnectionStatus, TUser } from '@prisma/client';
+import {
+  PrismaClient,
+  ConnectionStatus,
+  TUser,
+  TUserPublicMetrics,
+} from '@prisma/client';
 import { mainModule } from 'process';
 import {
   TwitterApi,
@@ -15,6 +20,7 @@ const prisma = new PrismaClient();
 const twitterClient = new TwitterApi(process.env.TWITTER_API_BEARER || '');
 const client = twitterClient.readOnly;
 
+const scraperId = 'scraper-following';
 /*
   TWITTER
 */
@@ -56,51 +62,93 @@ async function autoRetryOnRateLimitError<T>(callback: () => T | Promise<T>) {
   }
 }
 
-async function _fetchTwitterFollowingByUserId(userId: string) {
-  const request = await client.v2.following(userId, {
-    asPaginator: true,
-    max_results: 1000,
-    'user.fields': [
-      'created_at',
-      'description',
-      'entities',
-      'id',
-      'location',
-      'name',
-      'pinned_tweet_id',
-      'profile_image_url',
-      'protected',
-      'public_metrics',
-      'url',
-      'username',
-      'verified',
-      'withheld',
-    ],
-    expansions: 'pinned_tweet_id',
-  });
+async function _fetchTwitterFollowingByUserId(
+  userId: string,
+  isFullRefresh: boolean,
+) {
+  const { request, followers } = isFullRefresh
+    ? await _fetchFull()
+    : await _fetchPartial();
 
-  const followers: UserV2[] = [];
-  for await (const follower of request) {
-    followers.push(follower);
-  }
-
-  // The above for loop does not throw any errors
-  // so we have to do it ourselves. If we have hit the ratelimit
-  // there are no guarantees that the following list is complete
-  // we will retry when we are sure that we can request the whole list
   console.log('Ratelimit status:', request.rateLimit);
   if (request.rateLimit.remaining === 0) {
     throw new CustomRatelimitError(request.rateLimit);
   }
 
+  await prisma.scraperData.update({
+    where: { id: scraperId },
+    data: {
+      ratelimit_limit: request.rateLimit.limit,
+      ratelimit_remaining: request.rateLimit.remaining,
+      ratelimit_reset: request.rateLimit.reset,
+    },
+  });
+
   return followers;
+
+  async function _fetchFull() {
+    const request = await client.v2.following(userId, {
+      asPaginator: true,
+      max_results: 1000,
+      'user.fields': [
+        'created_at',
+        'description',
+        'entities',
+        'id',
+        'location',
+        'name',
+        'pinned_tweet_id',
+        'profile_image_url',
+        'protected',
+        'public_metrics',
+        'url',
+        'username',
+        'verified',
+        'withheld',
+      ],
+      expansions: 'pinned_tweet_id',
+    });
+
+    const followers: UserV2[] = [];
+    for await (const follower of request) {
+      followers.push(follower);
+    }
+    return { request, followers };
+  }
+
+  async function _fetchPartial() {
+    const request = await client.v2.following(userId, {
+      asPaginator: true,
+      max_results: 1000,
+      'user.fields': [
+        'created_at',
+        'description',
+        'entities',
+        'id',
+        'location',
+        'name',
+        'pinned_tweet_id',
+        'profile_image_url',
+        'protected',
+        'public_metrics',
+        'url',
+        'username',
+        'verified',
+        'withheld',
+      ],
+      expansions: 'pinned_tweet_id',
+    });
+
+    const followers = request.users;
+    return { request, followers };
+  }
 }
 
-async function fetchTwitterFollowingByUserId(userId: string) {
-  return await _fetchTwitterFollowingByUserId(userId);
-  // return await autoRetryOnRateLimitError(() =>
-  //   _fetchTwitterFollowingByUserId(userId),
-  // );
+async function fetchTwitterFollowingByUserId(
+  userId: string,
+  isFullRefresh: boolean,
+) {
+  return await _fetchTwitterFollowingByUserId(userId, isFullRefresh);
 }
 
 async function fetchTwitterUserByUsername(userName: string) {
@@ -115,13 +163,26 @@ async function fetchTwitterUserByUsername(userName: string) {
    DATABASE 
 */
 
-async function fetchLastScrapedMarkedUser() {
+async function fetchStalestMarkedUser(isFullRefresh: boolean) {
   return await prisma.tUser.findFirst({
     where: {
       marked: true,
     },
-    orderBy: {
-      scrapedAt: 'asc',
+    orderBy: [
+      { diffFollowingCount: 'desc' },
+      isFullRefresh
+        ? {
+            fullFollowingScrapedAt: 'asc',
+          }
+        : {
+            partialFollowingScrapedAt: 'asc',
+          },
+    ],
+    include: {
+      twitterPublicMetrics: true,
+      _count: {
+        select: { following: true },
+      },
     },
   });
 }
@@ -194,7 +255,6 @@ async function upsertUser(newUser: UserV2) {
     name: newUser.name,
     username: newUser.username,
     accountCreatedAt: newUser.created_at,
-    marked: false,
     twitterMetaData: {
       upsert: {
         create: twitterMetaData,
@@ -257,13 +317,16 @@ async function savefollowedChanges(
     added: Set<string>;
     removed: Set<string>;
   },
+  isFullRefresh: boolean,
 ) {
   for (const followedUserId of changes.added) {
     await _savefollowedChanges(user, followedUsers, followedUserId, false);
   }
 
-  for (const followedUserId of changes.removed) {
-    await _savefollowedChanges(user, followedUsers, followedUserId, true);
+  if (isFullRefresh) {
+    for (const followedUserId of changes.removed) {
+      await _savefollowedChanges(user, followedUsers, followedUserId, true);
+    }
   }
 }
 
@@ -272,6 +335,12 @@ async function createMarkedUserFromUsername(userName: string) {
     where: { username: { equals: userName, mode: 'insensitive' } },
   });
   if (existingUser) {
+    if (!existingUser.marked) {
+      await prisma.tUser.update({
+        where: { id: existingUser.id },
+        data: { marked: true },
+      });
+    }
     return existingUser;
   }
 
@@ -293,28 +362,51 @@ async function createMarkedUserFromUsername(userName: string) {
   });
 }
 
-async function updateMarkedUser(user: TUser) {
+async function updateMarkedUser(
+  user: TUser & {
+    twitterPublicMetrics: TUserPublicMetrics;
+    _count: {
+      following: number;
+    };
+  },
+  isFullRefresh: boolean,
+) {
   const updatedUser = await prisma.tUser.update({
     where: {
       id: user.id,
     },
     data: {
-      scrapedAt: new Date(),
+      ...(isFullRefresh
+        ? {
+            fullFollowingScrapedAt: new Date(),
+          }
+        : {
+            partialFollowingScrapedAt: new Date(),
+          }),
+      lastFollowingCount: user.twitterPublicMetrics.following_count,
+      diffFollowingCount: 0,
     },
   });
   return updatedUser;
 }
 
 async function _scrape() {
-  // Get the marked user that was last scraped
-  const markedUser = await fetchLastScrapedMarkedUser();
+  // Between 00:00 and 06:00 do full refreshes (adds and removes)
+  // Between 06:00 and 00:00 do partial refreshes (adds only)
+  const currentHour = new Date().getHours();
+  const isFullRefresh = currentHour >= 0 && currentHour <= 6.0;
+
+  const markedUser = await fetchStalestMarkedUser(isFullRefresh);
   console.log('Scraping:', markedUser);
 
   // Fetch the old followed from database
   const oldfollowed = await fetchDbFollowingOfUserId(markedUser.id);
 
   // Fetch the current followed from twitter API
-  const newfollowed = await fetchTwitterFollowingByUserId(markedUser.id);
+  const newfollowed = await fetchTwitterFollowingByUserId(
+    markedUser.id,
+    isFullRefresh,
+  );
 
   // Compute the changes in following
   const changes = computeChanges(
@@ -322,14 +414,16 @@ async function _scrape() {
     newfollowed.map((e) => e.id),
   );
   console.log(
-    `Changes in following:\n\tadded(${changes.added.size})\n\tremoved(${changes.removed.size})`,
+    `Changes in following:\n\tadded(${changes.added.size})${
+      isFullRefresh ? `\n\tremoved(${changes.removed.size}` : ``
+    })`,
   );
 
   // Save changes to database
-  await savefollowedChanges(markedUser, newfollowed, changes);
+  await savefollowedChanges(markedUser, newfollowed, changes, isFullRefresh);
 
   // Set last scraped of user to now
-  await updateMarkedUser(markedUser);
+  await updateMarkedUser(markedUser, isFullRefresh);
 }
 
 async function scrape() {
@@ -338,17 +432,38 @@ async function scrape() {
   console.log('Finished scrape...', new Date().toISOString());
 }
 
-async function main(accounts: string[]) {
-  for (const username of accounts) {
-    await createMarkedUserFromUsername(username);
+async function main() {
+  let scraperData = await prisma.scraperData.findUnique({
+    where: { id: scraperId },
+  });
+  if (!scraperData) {
+    console.log('Creating new scraper...');
+    scraperData = await prisma.scraperData.create({
+      data: {
+        id: scraperId,
+        ratelimit_limit: 0,
+        ratelimit_remaining: 0,
+        ratelimit_reset: 0,
+      },
+    });
   }
-
-  const DEFAULT_DELAY = 1000 * 60 * 1;
-  let current_delay = 1;
-  let timerId = setTimeout(async function request() {
-    current_delay = DEFAULT_DELAY;
+  console.log(`Scraper data:`, scraperData);
+  const scraperStale =
+    Date.now() - scraperData.updatedAt.valueOf() > 1000.0 * 60.0 * 30.0; // 30 minutes
+  const ratelimitHasReset =
+    Date.now() - scraperData.ratelimit_reset * 1000.0 > 0;
+  console.log(`Stale: ${scraperStale}, Ratelimit reset: ${ratelimitHasReset}`);
+  if (
+    scraperData.ratelimit_remaining > 0 ||
+    ratelimitHasReset ||
+    scraperStale
+  ) {
     try {
       await scrape();
+      await prisma.scraperData.update({
+        where: { id: scraperId },
+        data: { error: null },
+      });
     } catch (error) {
       if (
         (error instanceof ApiResponseError &&
@@ -356,161 +471,36 @@ async function main(accounts: string[]) {
           error.rateLimit) ||
         (error instanceof CustomRatelimitError && error.rateLimit)
       ) {
-        const resetTimeout = error.rateLimit.reset * 1000; // convert to ms time instead of seconds time
-        const timeToWait = resetTimeout - Date.now();
-        console.log(
-          `Ratelimited: sleeping for ${timeToWait / 1000.0 / 60.0} minutes`,
-        );
-        current_delay = timeToWait;
+        await prisma.scraperData.update({
+          where: { id: scraperId },
+          data: {
+            error: 'Ratelimited',
+            ratelimit_limit: error.rateLimit.limit,
+            ratelimit_remaining: error.rateLimit.remaining,
+            ratelimit_reset: error.rateLimit.reset,
+          },
+        });
       } else if (
         error instanceof ApiResponseError ||
         error instanceof ApiRequestError
       ) {
-        console.log('Encountered error requesting data from Twitter', error);
+        await prisma.scraperData.update({
+          where: { id: scraperId },
+          data: { error: error.message },
+        });
       } else {
         throw error;
       }
     }
-    timerId = setTimeout(request, current_delay);
-  }, current_delay);
-
-  //setInterval(async () => await scrape(), 1000*60*2);
-  // while (true) {
-  //   await scrape();
-  //   console.log(`Finished iteration (${iteration}) waiting for 1.5 minutes...`);
-  //   iteration += 1;
-
-  //   for (let index = 0; index < 10; index++) {
-  //     await sleep((1000 * 60 * 1.5)/10); // Scrape every two minutes
-  //     console.log("...", index)
-  //   }
-
-  // }
+  }
 }
 
-const markerAccounts = [
-  '@___magnus___',
-  '@0x_b1',
-  '@0x9116',
-  '@0xdaes',
-  '@0xedenau',
-  '@0xLordAlpha',
-  '@0xmaki',
-  '@0xminion',
-  '@0xPEPO',
-  '@0xshroom',
-  '@0xShual',
-  '@0xtuba',
-  '@0xunihax0r',
-  '@0xzewn',
-  '@12_elysian',
-  '@3azima85',
-  '@500altcoins',
-  '@alfalfaleeks',
-  '@alpinestar17',
-  '@Arthur_0x',
-  '@AutomataEmily',
-  '@ayumirage',
-  '@bantg',
-  '@bigdsenpai',
-  '@bigmagicdao',
-  '@bneiluj',
-  '@boredGenius',
-  '@boredGenius',
-  '@CapitalGrug',
-  '@ChainLinkGod',
-  '@chocolatemastr',
-  '@CL207',
-  '@Cpcf5',
-  '@criptopaul',
-  '@crypt00_pepe',
-  '@cryptik1e',
-  '@crypto_condom',
-  '@CryptoCanti',
-  '@cryptodetweiler',
-  '@cryptoninjaah',
-  '@CryptoSamurai',
-  '@cryptoyieldinfo',
-  '@cuckqueeen',
-  '@daaphex',
-  '@danielesesta',
-  '@dcfgod',
-  '@DCP84',
-  '@DeFi_Dad',
-  '@defikhalil',
-  '@DefiMoon',
-  '@defiXBT',
-  '@degencryptoinfo',
-  '@DegenSpartan',
-  '@devops199fan',
-  '@duke_rick1',
-  '@einsteindefi',
-  '@farmerbrowndefi',
-  '@fiskantes',
-  '@gabrielhaines',
-  '@gametheorizing',
-  '@garrettz',
-  '@GiganticRebirth',
-  '@grugcapital',
-  '@hasufl',
-  '@hedgedhog7',
-  '@hosseeb',
-  '@hsakatrades',
-  '@intocryptoast',
-  '@jadler0',
-  '@joey__santoro',
-  '@juanmpellicer',
-  '@knowerofmarkets',
-  '@korpi87',
-  '@lightcrypto',
-  '@Lomashuk',
-  '@loomdart',
-  '@mewn21',
-  '@mgnr_io',
-  '@miyuki_crypto',
-  '@MrCartographer_',
-  '@n2ckchong',
-  '@nanexcool',
-  '@not3lau_capital',
-  '@officer_cia',
-  '@princebtc28',
-  '@Rafi_0x',
-  '@realwillhunting',
-  '@rektfoodfarmer',
-  '@Rewkang',
-  '@riddle245',
-  '@romeensheth',
-  '@route2fi',
-  '@ruisanape',
-  '@RyAn__0x',
-  '@samkazemian',
-  '@santiagoroel',
-  '@sassal0x',
-  '@scupytrooples',
-  '@sillypunts',
-  '@smallcapscience',
-  '@snipster33',
-  '@StaniKulechov',
-  '@statelayer',
-  '@takimaeda2',
-  '@tcbean',
-  '@tetranode',
-  '@tier10k',
-  '@tztokchad',
-  '@vfat0',
-  '@w0000CE0',
-  '@WartuII',
-  '@woonomic',
-  '@xenes1s',
-  '@YuntCapital',
-  '@ZenoCapitaI',
-  '@zer0_alpha_',
-  '0xSami_',
-];
+async function tempMain() {
+  await main();
+  const timer = setInterval(() => main(), 1000.0 * 60.0);
+}
 
-const test = ['esa_was_taken', '@0x9116'];
-
-main(markerAccounts.map((acc) => acc.replace('@', '')))
+tempMain()
   .catch((e) => {
     throw e;
   })

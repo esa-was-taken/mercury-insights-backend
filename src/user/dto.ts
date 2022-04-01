@@ -7,6 +7,7 @@ import {
   IsString,
   IsObject,
   ValidateNested,
+  IsBoolean,
 } from 'class-validator';
 import {
   GridFilterModel,
@@ -61,4 +62,12 @@ export class ListMostTrendingUsersDto extends IntervalDto {
   @IsObject()
   @ValidateNested()
   filter: GridFilterModel;
+}
+
+export class UpsertUserDto {
+  @IsString()
+  username: string;
+
+  @IsBoolean()
+  marked: boolean;
 }

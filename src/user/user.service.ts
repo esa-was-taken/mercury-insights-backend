@@ -17,10 +17,11 @@ import {
 } from 'src/interfaces/user.interface';
 import { PrismaService } from 'src/prisma.service';
 import { GridSortItemDto } from './dto';
+import { TwitterService } from '../twitter/twitter.service';
 
 @Injectable()
 export class UserService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private twitter: TwitterService) {}
 
   async getUser(userId: string): Promise<User> {
     const user = await this.prisma.tUser.findUnique({
@@ -32,6 +33,35 @@ export class UserService {
       metadata: user.twitterMetaData ?? ({} as UserMetadata),
       public_metrics: user.twitterPublicMetrics ?? ({} as UserPublicMetrics),
     } as User;
+  }
+
+  async upsertUser(username: string, marked: boolean) {
+    const request = await this.twitter.client.v2.userByUsername(username);
+    if (!request.data) {
+      throw new Error(`User does not exist with username ${username}`);
+    }
+
+    const user = request.data;
+    await this.prisma.tUser.upsert({
+      where: { id: user.id },
+      create: {
+        id: user.id,
+        username: user.username,
+        name: user.name,
+        marked: marked,
+      },
+      update: {
+        marked: marked,
+      },
+    });
+  }
+
+  async listMarkedUsers() {
+    const markedUsers = await this.prisma.tUser.findMany({
+      where: { marked: true },
+    });
+
+    return markedUsers;
   }
 
   async getUserByUserName(userName: string): Promise<User> {
@@ -48,13 +78,14 @@ export class UserService {
 
   async mostFollowedUsers(): Promise<UserWithFollowers[]> {
     type TUserWithFollowers = TUser & {
+      marked_followers_ratio: number;
       followers: number;
       metadata: TUserMetadata;
       public_metrics: TUserPublicMetrics;
     };
 
     const popular = await this.prisma.$queryRaw<TUserWithFollowers[]>` 
-      SELECT U.*, row_to_json(MD.*) as metadata, row_to_json(PM.*) as public_metrics
+      SELECT U.FOLLOWERS / NULLIF(PM.followers_count, 0.0) * 100.0 as marked_followers_ratio, U.*, row_to_json(MD.*) as metadata, row_to_json(PM.*) as public_metrics
       FROM
         (SELECT COUNT(CONN."toId") AS FOLLOWERS,
             U.*
@@ -101,6 +132,7 @@ export class UserService {
     }
 
     type CustomTUserFollowingDiff = TUser & {
+      marked_followers_ratio: number;
       followers: number;
       difference: number;
       metadata: TUserMetadata;
@@ -108,7 +140,7 @@ export class UserService {
     };
 
     const trending = await this.prisma.$queryRaw<CustomTUserFollowingDiff[]>`
-  SELECT T1.*,
+  SELECT T1.FOLLOWERS / NULLIF(PM.followers_count, 0.0) * 100.0 as marked_followers_ratio, T1.*,
   row_to_json(MD.*) as metadata, row_to_json(PM.*) as public_metrics,
 	COALESCE(T1.FOLLOWERS,
 		0) - COALESCE(T2.FOLLOWERS,
