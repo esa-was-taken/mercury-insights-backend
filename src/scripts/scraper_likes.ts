@@ -347,7 +347,12 @@ async function main() {
   }
 }
 
-main()
+async function tempMain() {
+  await main();
+  const timer = setInterval(() => main(), 1000.0 * 60.0);
+}
+
+tempMain()
   .catch((e) => {
     throw e;
   })

@@ -42,9 +42,10 @@ export class UserController {
   ): Promise<UserFollowersDiff[]> {
     return await this.userService.mostTrendingUsers(query.start, query.end);
   }
-  @Get(':id')
-  async getUser(@Param() params): Promise<User> {
-    return await this.userService.getUser(params.id);
+
+  @Get('/marked')
+  async listMarkedUsers() {
+    return await this.userService.listMarkedUsers();
   }
 
   @Get('/by/username/:userName')
@@ -58,11 +59,6 @@ export class UserController {
       upsertUserDto.username,
       upsertUserDto.marked,
     );
-  }
-
-  @Get('/marked')
-  async listMarkedUsers() {
-    return await this.userService.listMarkedUsers();
   }
 
   @Get(':id/followers')
@@ -87,5 +83,10 @@ export class UserController {
       query.limit,
       query.offset,
     );
+  }
+
+  @Get(':id')
+  async getUser(@Param() params): Promise<User> {
+    return await this.userService.getUser(params.id);
   }
 }

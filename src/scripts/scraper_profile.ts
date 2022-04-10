@@ -103,8 +103,15 @@ async function _scrape() {
         diffFollowingCount: Math.abs(
           twitterPublicMetrics.following_count - _user.lastFollowingCount,
         ),
-        twitterMetaData: { update: twitterMetaData },
-        twitterPublicMetrics: { update: twitterPublicMetrics },
+        twitterMetaData: {
+          upsert: { update: twitterMetaData, create: twitterMetaData },
+        },
+        twitterPublicMetrics: {
+          upsert: {
+            update: twitterPublicMetrics,
+            create: twitterPublicMetrics,
+          },
+        },
       },
     });
   }
