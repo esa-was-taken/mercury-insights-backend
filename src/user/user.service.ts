@@ -117,19 +117,14 @@ export class UserService {
     });
   }
 
-  async mostTrendingUsers(
-    intervalStart: Date,
-    intervalEnd: Date,
-  ): Promise<UserFollowersDiff[]> {
-    if (!intervalStart && !intervalEnd) {
-      intervalStart = new Date();
-      intervalStart.setHours(intervalStart.getHours() - 24);
-      intervalEnd = new Date();
+  async mostTrendingUsers(interval: number): Promise<UserFollowersDiff[]> {
+    if (interval <= 0) {
+      throw new Error('Interval has to be positive non-zero number');
     }
 
-    if (intervalEnd < intervalStart) {
-      throw new Error('Start cannot be earlier than end');
-    }
+    const intervalStart = new Date();
+    intervalStart.setHours(intervalStart.getHours() - interval);
+    const intervalEnd = new Date();
 
     type CustomTUserFollowingDiff = TUser & {
       marked_followers_ratio: number;

@@ -2,9 +2,11 @@ import {
   Body,
   CacheInterceptor,
   CacheTTL,
+  CACHE_MANAGER,
   ClassSerializerInterceptor,
   Controller,
   Get,
+  Inject,
   Param,
   Post,
   Query,
@@ -24,23 +26,37 @@ import {
 } from './dto';
 import { UserService } from './user.service';
 
-@UseInterceptors(CacheInterceptor)
+import { Cache } from 'cache-manager';
+
 @Controller('user')
 export class UserController {
-  constructor(private userService: UserService) {}
+  constructor(
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    private userService: UserService,
+  ) {}
 
-  @CacheTTL(300)
   @Get('/popular')
   async listMostFollowedUsers(): Promise<UserWithFollowers[]> {
-    return await this.userService.mostFollowedUsers();
+    let value = await this.cacheManager.get<UserWithFollowers[]>('popular');
+    if (value) {
+      return value;
+    }
+    value = await this.userService.mostFollowedUsers();
+    this.cacheManager.set('popular', value, { ttl: 300 });
+    return value;
   }
 
-  @CacheTTL(300)
-  @Get('/trending')
-  async listMostTrendingUsers(
-    @Query() query: IntervalDto,
-  ): Promise<UserFollowersDiff[]> {
-    return await this.userService.mostTrendingUsers(query.start, query.end);
+  @Get('/trending/:interval')
+  async listMostTrendingUsers(@Param() params): Promise<UserFollowersDiff[]> {
+    let value = await this.cacheManager.get<UserFollowersDiff[]>(
+      `trending-${params.interval}`,
+    );
+    if (value) {
+      return value;
+    }
+    value = await this.userService.mostTrendingUsers(params.interval);
+    this.cacheManager.set(`trending-${params.interval}`, value, { ttl: 300 });
+    return value;
   }
 
   @Get('/marked')
