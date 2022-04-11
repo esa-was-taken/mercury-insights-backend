@@ -85,6 +85,13 @@ export class UserController {
       updateDto.weight,
     );
   }
+  @Get(':username/likedBy')
+  async userLikedBy(@Param() params) {
+    console.log('helloo???');
+    const users = await this.userService.markedUsersLikedUser(params.username);
+    console.log(users);
+    return await users;
+  }
 
   @Get(':id/followers')
   async listFollowersOfUser(

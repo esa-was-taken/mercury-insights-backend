@@ -288,4 +288,23 @@ LEFT JOIN PUBLIC."TUserPublicMetrics" AS PM ON T1.ID = PM."tUserId";`;
       return { id: x.id, name: x.name, username: x.username } as User;
     });
   }
+
+  async markedUsersLikedUser(username: string) {
+    const user = await this.prisma.tUser.findFirst({
+      where: { username: username },
+      select: { id: true },
+    });
+    if (user === null) {
+      throw new Error('Could not find userId');
+    }
+    console.log('authorId', user);
+
+    const markedUsers = await this.prisma.$queryRaw<TUser[]>`
+    SELECT TUSER.*
+	FROM public."TTweet" AS TWEET
+	LEFT JOIN (SELECT * FROM public."TLike" AS TLIKE) TLIKE ON TLIKE."tTweetId" = TWEET.id
+	LEFT JOIN (SELECT * FROM public."TUser" AS TUSER) TUSER ON TUSER."id" = TLIKE."tUserId"
+	WHERE TWEET."authorId" = ${user.id}`;
+    return markedUsers;
+  }
 }
