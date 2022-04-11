@@ -8,6 +8,7 @@ import {
   IsObject,
   ValidateNested,
   IsBoolean,
+  IsNumber,
 } from 'class-validator';
 import {
   GridFilterModel,
@@ -70,4 +71,12 @@ export class UpsertUserDto {
 
   @IsBoolean()
   marked: boolean;
+}
+
+export class UpdateWeightUserDto {
+  @IsString()
+  username: string;
+
+  @IsNumber()
+  weight: number;
 }

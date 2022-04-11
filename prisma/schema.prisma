@@ -20,6 +20,7 @@ model TUser {
   accountCreatedAt          DateTime? // To be removed
   accountExists             Boolean?
   marked                    Boolean       @default(false)
+  markedWeight              Int           @default(1)
   scrapedAt                 DateTime      @default(now())
   partialFollowingScrapedAt DateTime      @default(now())
   fullFollowingScrapedAt    DateTime      @default(now())

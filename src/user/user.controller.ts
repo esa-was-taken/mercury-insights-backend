@@ -23,6 +23,7 @@ import {
   ListMostTrendingUsersDto,
   PaginateDto,
   UpsertUserDto,
+  UpdateWeightUserDto,
 } from './dto';
 import { UserService } from './user.service';
 
@@ -74,6 +75,14 @@ export class UserController {
     return await this.userService.upsertUser(
       upsertUserDto.username,
       upsertUserDto.marked,
+    );
+  }
+
+  @Post('/weight')
+  async updateMarkedUserWeight(@Body() updateDto: UpdateWeightUserDto) {
+    return await this.userService.updateMarkedUserWeight(
+      updateDto.username,
+      updateDto.weight,
     );
   }
 

@@ -29,9 +29,11 @@ export interface UserPublicMetrics {
 
 export interface UserWithFollowers extends User {
   marked_followers_ratio: number;
-  followers: number;
+  marked_followers: number;
+  weighted_marked_followers: number;
 }
 
 export interface UserFollowersDiff extends UserWithFollowers {
   difference: number;
+  weighted_difference: number;
 }

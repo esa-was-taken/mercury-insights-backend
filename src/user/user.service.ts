@@ -56,6 +56,15 @@ export class UserService {
     });
   }
 
+  async updateMarkedUserWeight(username: string, weight: number) {
+    return await this.prisma.tUser.updateMany({
+      where: { username: username },
+      data: {
+        markedWeight: weight,
+      },
+    });
+  }
+
   async listMarkedUsers() {
     const markedUsers = await this.prisma.tUser.findMany({
       where: { marked: true },
@@ -79,15 +88,18 @@ export class UserService {
   async mostFollowedUsers(): Promise<UserWithFollowers[]> {
     type TUserWithFollowers = TUser & {
       marked_followers_ratio: number;
-      followers: number;
+      marked_followers: number;
+      weighted_marked_followers: number;
       metadata: TUserMetadata;
       public_metrics: TUserPublicMetrics;
     };
 
     const popular = await this.prisma.$queryRaw<TUserWithFollowers[]>` 
-      SELECT U.FOLLOWERS / NULLIF(PM.followers_count, 0.0) * 100.0 as marked_followers_ratio, U.*, row_to_json(MD.*) as metadata, row_to_json(PM.*) as public_metrics
+      SELECT U.MARKED_FOLLOWERS / NULLIF(PM.followers_count, 0.0) * 100.0 as marked_followers_ratio, U.*, row_to_json(MD.*) as metadata, row_to_json(PM.*) as public_metrics
       FROM
-        (SELECT COUNT(CONN."toId") AS FOLLOWERS,
+        (SELECT 
+        COUNT(CONN."toId") AS MARKED_FOLLOWERS,
+        SUM(markedUser."markedWeight") AS WEIGHTED_MARKED_FOLLOWERS,
             U.*
           FROM PUBLIC."TUser" U
           LEFT JOIN
@@ -104,6 +116,7 @@ export class UserService {
                     _INNER."toId",
                     _INNER."version" DESC) CONN
               WHERE CONN."status" = 'CONNECTED') CONN ON U.ID = CONN."toId"
+      LEFT JOIN ( SELECT "id" as markedId, "markedWeight" FROM PUBLIC."TUser") markedUser ON CONN."fromId" = markedUser.markedId  
           GROUP BY U.ID) U
       LEFT JOIN PUBLIC."TUserMetadata" AS MD ON U.ID = MD."tUserId"
       LEFT JOIN PUBLIC."TUserPublicMetrics" AS PM ON U.ID = PM."tUserId";
@@ -128,24 +141,31 @@ export class UserService {
 
     type CustomTUserFollowingDiff = TUser & {
       marked_followers_ratio: number;
-      followers: number;
+      marked_followers: number;
+      weighted_marked_followers: number;
       difference: number;
+      weighted_difference: number;
       metadata: TUserMetadata;
       public_metrics: TUserPublicMetrics;
     };
 
     const trending = await this.prisma.$queryRaw<CustomTUserFollowingDiff[]>`
-  SELECT T1.FOLLOWERS / NULLIF(PM.followers_count, 0.0) * 100.0 as marked_followers_ratio, T1.*,
+  SELECT T1.MARKED_FOLLOWERS / NULLIF(PM.followers_count, 0.0) * 100.0 as marked_followers_ratio, T1.*,
   row_to_json(MD.*) as metadata, row_to_json(PM.*) as public_metrics,
-	COALESCE(T1.FOLLOWERS,
-		0) - COALESCE(T2.FOLLOWERS,
+	COALESCE(T1.MARKED_FOLLOWERS,
+		0) - COALESCE(T2.MARKED_FOLLOWERS,
 
-								0) AS difference
+								0) AS difference,
+  COALESCE(T1.WEIGHTED_MARKED_FOLLOWERS,
+    0) - COALESCE(T2.WEIGHTED_MARKED_FOLLOWERS,
+
+                0) AS weighted_difference
 FROM
 	(SELECT ID,
 			NAME,
 			USERNAME,
-			COUNT(CONN."toId") AS FOLLOWERS
+			COUNT(CONN."toId") AS MARKED_FOLLOWERS,
+      SUM(markedUser."markedWeight") AS WEIGHTED_MARKED_FOLLOWERS
 		FROM PUBLIC."TUser" U
 		LEFT JOIN
 			(SELECT *
@@ -162,12 +182,14 @@ FROM
 							_INNER."toId",
 							_INNER."version" DESC) CONN
 				WHERE CONN."status" = 'CONNECTED') CONN ON U.ID = CONN."toId"
+        LEFT JOIN ( SELECT "id" as markedId, "markedWeight" FROM PUBLIC."TUser") markedUser ON CONN."fromId" = markedUser.markedId  
 		GROUP BY U.ID) AS T1
 FULL JOIN
 	(SELECT ID,
 			NAME,
 			USERNAME,
-			COUNT(CONN."toId") AS FOLLOWERS
+			COUNT(CONN."toId") AS MARKED_FOLLOWERS,
+      SUM(markedUser."markedWeight") AS WEIGHTED_MARKED_FOLLOWERS
 		FROM PUBLIC."TUser" U
 		LEFT JOIN
 			(SELECT *
@@ -184,6 +206,7 @@ FULL JOIN
 							_INNER."toId",
 							_INNER."version" DESC) CONN
 				WHERE CONN."status" = 'CONNECTED') CONN ON U.ID = CONN."toId"
+        LEFT JOIN ( SELECT "id" as markedId, "markedWeight" FROM PUBLIC."TUser") markedUser ON CONN."fromId" = markedUser.markedId  
 		GROUP BY U.ID) AS T2 USING(ID)
 LEFT JOIN PUBLIC."TUserMetadata" AS MD ON T1.ID = MD."tUserId"
 LEFT JOIN PUBLIC."TUserPublicMetrics" AS PM ON T1.ID = PM."tUserId";`;
