@@ -240,6 +240,7 @@ async function saveLikesChanges(
 }
 
 async function updateMarkedUser(user: TUser) {
+  console.log('2', user.id);
   const updatedUser = await prisma.tUser.update({
     where: {
       id: user.id,
@@ -254,27 +255,34 @@ async function updateMarkedUser(user: TUser) {
 async function _scrape() {
   // Get the marked user that was last scraped
   const markedUser = await fetchLastScrapedMarkedUser();
+  console.log('1', markedUser.id);
   console.log('Scraping:', markedUser);
+  if (
+    Date.now() - markedUser.likesScrapedAt.valueOf() >
+    1000.0 * 60.0 * 60.0 * 24.0 // 1 day
+  ) {
+    // Fetch the old followed from database
+    const oldLikes = await fetchDbLikesOfUserId(markedUser.id);
 
-  // Fetch the old followed from database
-  const oldLikes = await fetchDbLikesOfUserId(markedUser.id);
+    // Fetch the current followed from twitter API
+    const newLikes = await fetchTwitterLikesByUserId(markedUser.id);
+    console.log('Length: ', newLikes.length);
 
-  // Fetch the current followed from twitter API
-  const newLikes = await fetchTwitterLikesByUserId(markedUser.id);
-  console.log('Length: ', newLikes.length);
+    // Compute the changes in following
+    const changes = computeChanges(
+      oldLikes,
+      newLikes.map((e) => e.id),
+    );
+    console.log(`Changes in following:\n\tadded(${changes.added.size})`);
 
-  // Compute the changes in following
-  const changes = computeChanges(
-    oldLikes,
-    newLikes.map((e) => e.id),
-  );
-  console.log(`Changes in following:\n\tadded(${changes.added.size})`);
+    // Save changes to database
+    await saveLikesChanges(markedUser, newLikes, changes);
 
-  // Save changes to database
-  await saveLikesChanges(markedUser, newLikes, changes);
-
-  // Set last scraped of user to now
-  await updateMarkedUser(markedUser);
+    // Set last scraped of user to now
+    await updateMarkedUser(markedUser);
+  } else {
+    console.log('Nothing to update...');
+  }
 }
 
 async function scrape() {
@@ -317,6 +325,7 @@ async function main() {
         data: { error: null },
       });
     } catch (error) {
+      console.log('ERROR:', error);
       if (
         (error instanceof ApiResponseError &&
           error.rateLimitError &&
