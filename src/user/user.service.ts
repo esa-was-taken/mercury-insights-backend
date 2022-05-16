@@ -78,6 +78,10 @@ export class UserService {
       where: { username: userName },
       include: { twitterMetaData: true, twitterPublicMetrics: true },
     });
+
+    if (user === null) {
+      throw new Error('Could not find user');
+    }
     return {
       ...user,
       metadata: user.twitterMetaData ?? ({} as UserMetadata),
@@ -297,10 +301,9 @@ LEFT JOIN PUBLIC."TUserPublicMetrics" AS PM ON T1.ID = PM."tUserId";`;
     if (user === null) {
       throw new Error('Could not find userId');
     }
-    console.log('authorId', user);
 
     const markedUsers = await this.prisma.$queryRaw<TUser[]>`
-    SELECT TUSER.*
+    SELECT DISTINCT(TUSER.id), TUSER.*
 	FROM public."TTweet" AS TWEET
 	LEFT JOIN (SELECT * FROM public."TLike" AS TLIKE) TLIKE ON TLIKE."tTweetId" = TWEET.id
 	LEFT JOIN (SELECT * FROM public."TUser" AS TUSER) TUSER ON TUSER."id" = TLIKE."tUserId"
