@@ -223,16 +223,18 @@ LEFT JOIN PUBLIC."TUserPublicMetrics" AS PM ON T1.ID = PM."tUserId";`;
     });
   }
 
-  async findFollowersOf(
+  _queryFindFollowersOf(
+    status: 'CONNECTED' | 'DISCONNECTED',
     userId: string,
-    limit = 100,
-    offset = 0,
-  ): Promise<User[]> {
-    const followers = await this.prisma.$queryRaw<TUser[]>`
+    limit: number,
+    offset: number,
+  ) {
+    return Prisma.sql`
     SELECT ID,
       NAME,
       USERNAME,
-      MARKED
+      MARKED,
+      CONN."createdAt" as addedAt
     FROM PUBLIC."TUser" U
     JOIN
       (SELECT *
@@ -249,47 +251,94 @@ LEFT JOIN PUBLIC."TUserPublicMetrics" AS PM ON T1.ID = PM."tUserId";`;
             ORDER BY _INNER."fromId",
               _INNER."toId",
               _INNER."version" DESC) CONN
-        WHERE CONN."status" = 'CONNECTED'
-        ORDER BY CONN."createdAt" DESC) CONN ON U.ID = CONN."fromId"
+        WHERE CONN."status" = ${status}
+        ) CONN ON U.ID = CONN."fromId"
+        ORDER BY CONN."createdAt" DESC
     OFFSET ${offset} 
     LIMIT ${limit}`;
+  }
+
+  async findFollowersOf(
+    userId: string,
+    status: 'CONNECTED' | 'DISCONNECTED' = 'CONNECTED',
+    limit = 100,
+    offset = 0,
+  ) {
+    type TQueryResult = TUser & {
+      addedat: string;
+    };
+
+    const followers = await this.prisma.$queryRaw<TQueryResult[]>(
+      this._queryFindFollowersOf(status, userId, limit, offset),
+    );
+
     return followers.map((x) => {
-      return { id: x.id, name: x.name, username: x.username } as User;
+      return {
+        id: x.id,
+        name: x.name,
+        username: x.username,
+        addedAt: new Date(x.addedat).getTime(),
+      };
     });
+  }
+
+  _queryFindFollowingOf(
+    status: 'CONNECTED' | 'DISCONNECTED',
+    userId: string,
+    limit: number,
+    offset: number,
+  ) {
+    return Prisma.sql`
+    SELECT ID,
+    NAME,
+    USERNAME,
+    MARKED,
+    CONN."createdAt" as addedAt
+  FROM PUBLIC."TUser" U
+  JOIN
+    (SELECT *
+      FROM
+        (SELECT DISTINCT ON (_INNER."fromId", _INNER."toId") 
+            _INNER."fromId",
+            _INNER."toId",
+            _INNER."status",
+            _INNER."version",
+            _INNER."createdAt"
+          FROM PUBLIC."TConnection" _INNER
+          WHERE _INNER."createdAt" <= TIMEZONE('utc', NOW())
+            AND _INNER."fromId" = ${userId}
+          ORDER BY _INNER."fromId",
+            _INNER."toId",
+            _INNER."version" DESC) CONN
+      WHERE CONN."status" = ${status}
+      ) CONN ON U.ID = CONN."toId"
+      ORDER BY CONN."createdAt" DESC
+  OFFSET ${offset} 
+  LIMIT ${limit}
+    `;
   }
 
   async findFollowingOf(
     userId: string,
+    status: 'CONNECTED' | 'DISCONNECTED' = 'CONNECTED',
     limit = 100,
     offset = 0,
-  ): Promise<User[]> {
-    const following = await this.prisma.$queryRaw<TUser[]>`
-    SELECT ID,
-      NAME,
-      USERNAME,
-      MARKED
-    FROM PUBLIC."TUser" U
-    JOIN
-      (SELECT *
-        FROM
-          (SELECT DISTINCT ON (_INNER."fromId", _INNER."toId") 
-              _INNER."fromId",
-              _INNER."toId",
-              _INNER."status",
-              _INNER."version",
-              _INNER."createdAt"
-            FROM PUBLIC."TConnection" _INNER
-            WHERE _INNER."createdAt" <= TIMEZONE('utc', NOW())
-              AND _INNER."fromId" = ${userId}
-            ORDER BY _INNER."fromId",
-              _INNER."toId",
-              _INNER."version" DESC) CONN
-        WHERE CONN."status" = 'CONNECTED'
-        ORDER BY CONN."createdAt" DESC) CONN ON U.ID = CONN."toId"
-    OFFSET ${offset} 
-    LIMIT ${limit}`;
+  ) {
+    type TQueryResult = TUser & {
+      addedat: string;
+    };
+
+    const following = await this.prisma.$queryRaw<TQueryResult[]>(
+      this._queryFindFollowingOf(status, userId, limit, offset),
+    );
+
     return following.map((x) => {
-      return { id: x.id, name: x.name, username: x.username } as User;
+      return {
+        id: x.id,
+        name: x.name,
+        username: x.username,
+        addedAt: new Date(x.addedat).getTime(),
+      };
     });
   }
 
@@ -302,12 +351,28 @@ LEFT JOIN PUBLIC."TUserPublicMetrics" AS PM ON T1.ID = PM."tUserId";`;
       throw new Error('Could not find userId');
     }
 
-    const markedUsers = await this.prisma.$queryRaw<TUser[]>`
-    SELECT DISTINCT(TUSER.id), TUSER.*
-	FROM public."TTweet" AS TWEET
-	LEFT JOIN (SELECT * FROM public."TLike" AS TLIKE) TLIKE ON TLIKE."tTweetId" = TWEET.id
-	LEFT JOIN (SELECT * FROM public."TUser" AS TUSER) TUSER ON TUSER."id" = TLIKE."tUserId"
-	WHERE TWEET."authorId" = ${user.id}`;
-    return markedUsers;
+    type TQueryResult = TUser & {
+      addedat: string;
+    };
+
+    const markedUsers = await this.prisma.$queryRaw<TQueryResult[]>`
+    SELECT sq.* FROM (
+      SELECT DISTINCT ON (TUSER.id) TLIKE."recordCreatedAt" as ADDEDAT, TUSER.*
+      FROM public."TTweet" AS TWEET
+      LEFT JOIN (SELECT * FROM public."TLike" AS TLIKE) TLIKE ON TLIKE."tTweetId" = TWEET.id
+      LEFT JOIN (SELECT * FROM public."TUser" AS TUSER) TUSER ON TUSER."id" = TLIKE."tUserId"
+      WHERE TWEET."authorId" = ${user.id}
+      ORDER BY TUSER.id, ADDEDAT DESC
+    ) as sq
+    ORDER BY sq.ADDEDAT DESC;`;
+
+    return markedUsers.map((x) => {
+      return {
+        id: x.id,
+        name: x.name,
+        username: x.username,
+        addedAt: new Date(x.addedat).getTime(),
+      };
+    });
   }
 }

@@ -87,31 +87,51 @@ export class UserController {
   }
   @Get(':username/likedBy')
   async userLikedBy(@Param() params) {
-    console.log('helloo???');
     const users = await this.userService.markedUsersLikedUser(params.username);
-    console.log(users);
     return await users;
   }
 
-  @Get(':id/followers')
-  async listFollowersOfUser(
+  @Get(':id/followers/removed')
+  async listRemovedFollowersOfUser(
     @Param() params,
     @Query() query: PaginateDto,
-  ): Promise<User[]> {
+  ) {
     return await this.userService.findFollowersOf(
       params.id,
+      'DISCONNECTED',
+      query.limit,
+      query.offset,
+    );
+  }
+
+  @Get(':id/followers')
+  async listFollowersOfUser(@Param() params, @Query() query: PaginateDto) {
+    return await this.userService.findFollowersOf(
+      params.id,
+      'CONNECTED',
+      query.limit,
+      query.offset,
+    );
+  }
+
+  @Get(':id/following/removed')
+  async listRemovedFollowingOfUser(
+    @Param() params,
+    @Query() query: PaginateDto,
+  ) {
+    return await this.userService.findFollowingOf(
+      params.id,
+      'DISCONNECTED',
       query.limit,
       query.offset,
     );
   }
 
   @Get(':id/following')
-  async listFollowingOfUser(
-    @Param() params,
-    @Query() query: PaginateDto,
-  ): Promise<User[]> {
+  async listFollowingOfUser(@Param() params, @Query() query: PaginateDto) {
     return await this.userService.findFollowingOf(
       params.id,
+      'CONNECTED',
       query.limit,
       query.offset,
     );
